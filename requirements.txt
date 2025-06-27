@@ -1,0 +1,29 @@
+# Core Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+streamlit==1.28.1
+
+# Document Processing
+pdfplumber==0.10.3
+easyocr==1.7.0
+Pillow==10.1.0
+
+# LLM and AI
+langchain==0.0.350
+langchain-community>=0.0.2
+ollama==0.1.7
+sentence-transformers==2.2.2
+tiktoken==0.5.1
+
+# Vector Database
+chromadb==0.4.18
+
+# Utilities
+python-multipart==0.0.6
+pydantic==2.5.0
+python-dotenv==1.0.0
+
+# Development
+pytest==7.4.3
+black==23.11.0
+flake8==6.1.0 
