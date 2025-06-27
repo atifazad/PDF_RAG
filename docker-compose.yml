@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  pdf-rag:
+    build: .
+    ports:
+      - "8501:8501"  # Streamlit
+      - "8000:8000"  # FastAPI
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+    environment:
+      - LLM_MODEL=llama2:13b-chat
+      - DEBUG=True
+    depends_on:
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - pdf-rag-network
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - pdf-rag-network
+
+volumes:
+  ollama_data:
+
+networks:
+  pdf-rag-network:
+    driver: bridge 
