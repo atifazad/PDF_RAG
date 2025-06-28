@@ -11,49 +11,34 @@ from datetime import datetime
 # Add the backend directory to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'backend'))
 
-from chat_session import ChatSession, ChatMessage, PromptTemplate, LLMError
+from chat_session import ChatSession, ChatMessage, UnifiedPromptTemplate, LLMError
 
 
-class TestPromptTemplate(unittest.TestCase):
-    """Test cases for prompt templates."""
+class TestUnifiedPromptTemplate(unittest.TestCase):
+    """Test cases for unified prompt templates."""
     
-    def test_general_chat_template(self):
-        """Test general chat prompt template."""
-        prompt = PromptTemplate.general_chat("What is AI?")
-        self.assertIn("What is AI?", prompt)
+    def test_create_prompt_with_context(self):
+        """Test unified prompt creation with context."""
+        question = "What is the main topic?"
+        context = "This document discusses machine learning."
+        prompt = UnifiedPromptTemplate.create_prompt(question, context)
+        
+        self.assertIn(question, prompt)
+        self.assertIn(context, prompt)
+        self.assertIn("IMPORTANT RULES:", prompt)
+        self.assertIn("RESPONSE STYLES", prompt)
+        self.assertIn("DECISION RULES:", prompt)
+        self.assertIn("source attribution", prompt)
+    
+    def test_create_prompt_without_context(self):
+        """Test unified prompt creation without context."""
+        question = "Hello! How are you?"
+        prompt = UnifiedPromptTemplate.create_prompt(question)
+        
+        self.assertIn(question, prompt)
         self.assertIn("helpful AI assistant", prompt)
         self.assertIn("conversational manner", prompt)
-    
-    def test_rag_question_template(self):
-        """Test RAG question prompt template."""
-        context = "AI is artificial intelligence."
-        question = "What is AI?"
-        prompt = PromptTemplate.rag_question(question, context)
-        
-        self.assertIn(context, prompt)
-        self.assertIn(question, prompt)
-        self.assertIn("Answer based ONLY on the provided context", prompt)
-        self.assertIn("If the context doesn't contain enough information", prompt)
-    
-    def test_document_analysis_template(self):
-        """Test document analysis prompt template."""
-        context = "This document discusses machine learning."
-        question = "What is the main topic?"
-        prompt = PromptTemplate.document_analysis(question, context)
-        
-        self.assertIn(context, prompt)
-        self.assertIn(question, prompt)
-        self.assertIn("expert document analyst", prompt)
-    
-    def test_code_analysis_template(self):
-        """Test code analysis prompt template."""
-        context = "def hello(): print('Hello')"
-        question = "What does this code do?"
-        prompt = PromptTemplate.code_analysis(question, context)
-        
-        self.assertIn(context, prompt)
-        self.assertIn(question, prompt)
-        self.assertIn("expert code analyst", prompt)
+        self.assertNotIn("INSTRUCTIONS:", prompt)  # Should not have instructions when no context
 
 
 class TestChatMessage(unittest.TestCase):
@@ -70,7 +55,7 @@ class TestChatMessage(unittest.TestCase):
     
     def test_chat_message_with_metadata(self):
         """Test creating a chat message with metadata."""
-        metadata = {"prompt_type": "rag", "context": "test"}
+        metadata = {"context": "test"}
         message = ChatMessage("assistant", "Response", metadata=metadata)
         
         self.assertEqual(message.role, "assistant")
@@ -99,18 +84,9 @@ class TestChatMessage(unittest.TestCase):
 class TestChatSession(unittest.TestCase):
     """Test cases for chat session."""
     
-    def setUp(self):
-        """Set up test environment."""
-        # Clear any existing environment variables
-        self.env_vars_to_clear = ['LLM_MODEL', 'LLM_TEMPERATURE', 'LLM_MAX_TOKENS']
-        for var in self.env_vars_to_clear:
-            if var in os.environ:
-                del os.environ[var]
-    
     @patch('chat_session.create_llm_client')
     def test_chat_session_initialization(self, mock_create_client):
         """Test chat session initialization."""
-        # Mock the LLM client
         mock_client = Mock()
         mock_client.model_name = "llama2:13b-chat"
         mock_create_client.return_value = mock_client
@@ -159,8 +135,8 @@ class TestChatSession(unittest.TestCase):
         self.assertEqual(assistant_message.content, "Hello! I'm doing well, thank you for asking.")
     
     @patch('chat_session.create_llm_client')
-    def test_ask_rag_question(self, mock_create_client):
-        """Test asking a RAG-style question."""
+    def test_ask_with_context(self, mock_create_client):
+        """Test asking a question with context."""
         mock_client = Mock()
         mock_client.model_name = "llama2:13b-chat"
         mock_client.generate_response.return_value = "Based on the context, AI is artificial intelligence."
@@ -168,7 +144,7 @@ class TestChatSession(unittest.TestCase):
         
         chat = ChatSession()
         context = "AI is artificial intelligence."
-        response = chat.ask("What is AI?", context=context, prompt_type="rag")
+        response = chat.ask("What is AI?", context=context)
         
         self.assertEqual(response, "Based on the context, AI is artificial intelligence.")
         
@@ -196,8 +172,22 @@ class TestChatSession(unittest.TestCase):
         self.assertTrue(error_message.metadata.get("error", False))
     
     @patch('chat_session.create_llm_client')
-    def test_switch_model(self, mock_create_client):
-        """Test switching models."""
+    def test_ask_with_unexpected_error(self, mock_create_client):
+        """Test handling unexpected errors."""
+        mock_client = Mock()
+        mock_client.model_name = "llama2:13b-chat"
+        mock_client.generate_response.side_effect = Exception("Unexpected error")
+        mock_create_client.return_value = mock_client
+        
+        chat = ChatSession()
+        response = chat.ask("Hello!")
+        
+        self.assertIn("I apologize, but I encountered an unexpected error", response)
+        self.assertEqual(len(chat.messages), 2)  # User message + error response
+    
+    @patch('chat_session.create_llm_client')
+    def test_switch_model_success(self, mock_create_client):
+        """Test successful model switching."""
         mock_client = Mock()
         mock_client.model_name = "llama2:13b-chat"
         mock_client.switch_model.return_value = True
@@ -212,7 +202,7 @@ class TestChatSession(unittest.TestCase):
     
     @patch('chat_session.create_llm_client')
     def test_switch_model_failure(self, mock_create_client):
-        """Test model switching failure."""
+        """Test failed model switching."""
         mock_client = Mock()
         mock_client.model_name = "llama2:13b-chat"
         mock_client.switch_model.return_value = False
@@ -222,14 +212,14 @@ class TestChatSession(unittest.TestCase):
         success = chat.switch_model("invalid-model")
         
         self.assertFalse(success)
-        self.assertEqual(chat.model_name, "llama2:13b-chat")  # Should not change
+        self.assertEqual(chat.model_name, "llama2:13b-chat")  # Should remain unchanged
     
     @patch('chat_session.create_llm_client')
     def test_get_history(self, mock_create_client):
         """Test getting conversation history."""
         mock_client = Mock()
         mock_client.model_name = "llama2:13b-chat"
-        mock_client.generate_response.return_value = "Response"
+        mock_client.generate_response.return_value = "Test response"
         mock_create_client.return_value = mock_client
         
         chat = ChatSession()
@@ -237,18 +227,18 @@ class TestChatSession(unittest.TestCase):
         
         history = chat.get_history()
         
-        self.assertEqual(len(history), 2)
+        self.assertEqual(len(history), 2)  # User message + assistant response
         self.assertEqual(history[0]["role"], "user")
         self.assertEqual(history[0]["content"], "Hello!")
         self.assertEqual(history[1]["role"], "assistant")
-        self.assertEqual(history[1]["content"], "Response")
+        self.assertEqual(history[1]["content"], "Test response")
     
     @patch('chat_session.create_llm_client')
     def test_clear_history(self, mock_create_client):
         """Test clearing conversation history."""
         mock_client = Mock()
         mock_client.model_name = "llama2:13b-chat"
-        mock_client.generate_response.return_value = "Response"
+        mock_client.generate_response.return_value = "Test response"
         mock_create_client.return_value = mock_client
         
         chat = ChatSession()
@@ -265,49 +255,26 @@ class TestChatSession(unittest.TestCase):
         """Test getting session information."""
         mock_client = Mock()
         mock_client.model_name = "llama2:13b-chat"
+        mock_client.generate_response.return_value = "Test response"
         mock_create_client.return_value = mock_client
         
         chat = ChatSession()
+        chat.ask("Hello!")
+        
         info = chat.get_session_info()
         
+        self.assertIn("session_id", info)
+        self.assertIn("model_name", info)
+        self.assertIn("message_count", info)
+        self.assertIn("created_at", info)
+        self.assertIn("last_activity", info)
+        
         self.assertEqual(info["model_name"], "llama2:13b-chat")
-        self.assertEqual(info["message_count"], 0)
-        self.assertIsNotNone(info["session_id"])
-        self.assertIsNone(info["created_at"])  # No messages yet
-        self.assertIsNone(info["last_activity"])  # No messages yet
-    
-    @patch('chat_session.create_llm_client')
-    def test_format_response(self, mock_create_client):
-        """Test response formatting."""
-        mock_client = Mock()
-        mock_client.model_name = "llama2:13b-chat"
-        mock_client.generate_response.return_value = "Answer: This is the response."
-        mock_create_client.return_value = mock_client
-        
-        chat = ChatSession()
-        response = chat.ask("Test question")
-        
-        # Should remove "Answer:" prefix
-        self.assertEqual(response, "This is the response.")
-    
-    @patch('chat_session.create_llm_client')
-    def test_format_rag_response(self, mock_create_client):
-        """Test RAG response formatting."""
-        mock_client = Mock()
-        mock_client.model_name = "llama2:13b-chat"
-        mock_client.generate_response.return_value = "This is the answer."
-        mock_create_client.return_value = mock_client
-        
-        chat = ChatSession()
-        response = chat.ask("Test question", context="test context", prompt_type="rag")
-        
-        # Should add "Based on the provided context:" prefix
-        self.assertEqual(response, "Based on the provided context: This is the answer.")
+        self.assertEqual(info["message_count"], 2)
     
     @patch('chat_session.create_llm_client')
     def test_compare_models(self, mock_create_client):
-        """Test model comparison functionality."""
-        # Mock client that can switch models
+        """Test comparing different models."""
         mock_client = Mock()
         mock_client.model_name = "llama2:13b-chat"
         mock_client.generate_response.return_value = "Response from model"
