@@ -14,56 +14,69 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class PromptTemplate:
-    """Template for different types of prompts."""
+class UnifiedPromptTemplate:
+    """Unified prompt template that handles all question types with few-shot examples."""
     
     @staticmethod
-    def general_chat(prompt: str) -> str:
-        """General chat prompt template."""
-        return f"""You are a helpful AI assistant. Please provide a clear and informative response to the following question:
+    def create_prompt(question: str, context: str = None) -> str:
+        """
+        Create a unified prompt that handles all question types with few-shot examples.
+        
+        Args:
+            question: The user's question
+            context: Optional context for RAG-style questions
+        
+        Returns:
+            Formatted prompt string
+        """
+        if context:
+            return f"""You are a helpful AI assistant for a PDF RAG application. Your job is to classify the user's question and respond appropriately.
 
-Question: {prompt}
+IMPORTANT RULES:
+- Only use greetings, jokes, or conversational openers for GENERAL CONVERSATION.
+- For RAG, DOCUMENT ANALYSIS, and CODE ANALYSIS, answer directly and factually. Do NOT include greetings, jokes, or small talk.
+- If the context does not contain the answer for a RAG question, say: "The context does not provide this information."
+- For RAG questions, ALWAYS include source attribution in this format: "This answer came from [document name], [page/section info]."
+
+RESPONSE STYLES (use these as examples of how to respond, NOT as questions to answer):
+
+1. GENERAL CONVERSATION style:
+   - Use greetings and friendly tone
+   - Example response style: "Hello! I'm doing great, thank you for asking! How can I assist you today?"
+
+2. RAG QUESTION style:
+   - Answer based ONLY on the provided context
+   - Cite specific parts of the context
+   - ALWAYS include source attribution
+   - Example response style: "According to the context, [specific fact]. The document states [exact quote]. This answer came from [document name], [page/section info]."
+
+3. DOCUMENT ANALYSIS style:
+   - Analyze document structure, purpose, organization
+   - Example response style: "The document is structured as follows: [analysis]. The purpose is [analysis]."
+
+4. CODE ANALYSIS style:
+   - Provide technical analysis of code/implementation
+   - Example response style: "This function [technical explanation]. It uses [technical details]."
+
+NOW ANSWER THIS ACTUAL QUESTION:
+
+CONTEXT: {context}
+
+QUESTION: {question}
+
+DECISION RULES:
+- If the question is about greetings, casual conversation, or general knowledge NOT in the context → Use GENERAL CONVERSATION style
+- If the question asks for specific facts, numbers, or information that should be found in the provided context → Use RAG QUESTION style (include source attribution)
+- If the question asks about document structure, organization, purpose, or format → Use DOCUMENT ANALYSIS style
+- If the question asks about code, algorithms, or technical implementation details → Use CODE ANALYSIS style
+
+Please respond to the above question using the appropriate style."""
+        else:
+            return f"""You are a helpful AI assistant. Please provide a clear and informative response to the following question:
+
+Question: {question}
 
 Please respond in a helpful and conversational manner."""
-
-    @staticmethod
-    def rag_question(prompt: str, context: str) -> str:
-        """RAG-style prompt template with context."""
-        return f"""You are a helpful AI assistant. Please answer the following question based on the provided context.
-
-Context: {context}
-
-Question: {prompt}
-
-Instructions:
-- Answer based ONLY on the provided context
-- If the context doesn't contain enough information to answer the question, say so
-- Be specific and cite relevant parts of the context
-- Keep your response concise but informative
-
-Please provide a clear and accurate answer based on the context."""
-
-    @staticmethod
-    def document_analysis(prompt: str, context: str) -> str:
-        """Document analysis prompt template."""
-        return f"""You are an expert document analyst. Please analyze the following document content and answer the question.
-
-Document Content: {context}
-
-Question: {prompt}
-
-Please provide a detailed analysis based on the document content."""
-
-    @staticmethod
-    def code_analysis(prompt: str, context: str) -> str:
-        """Code analysis prompt template."""
-        return f"""You are an expert code analyst. Please analyze the following code and answer the question.
-
-Code: {context}
-
-Question: {prompt}
-
-Please provide a technical analysis of the code."""
 
 
 class ChatMessage:
@@ -107,42 +120,34 @@ class ChatSession:
         
         logger.info(f"Created chat session {self.session_id} with model: {self.model_name}")
     
-    def ask(self, question: str, context: str = None, prompt_type: str = "general") -> str:
+    def ask(self, question: str, context: str = None) -> str:
         """
-        Ask a question and get a response.
+        Ask a question and get a response using unified prompt approach.
         
         Args:
             question: The user's question
             context: Optional context for RAG-style questions
-            prompt_type: Type of prompt template to use
         
         Returns:
             The AI's response
         """
         try:
             # Add user message to history
-            user_message = ChatMessage("user", question, metadata={"context": context, "prompt_type": prompt_type})
+            user_message = ChatMessage("user", question, metadata={"context": context})
             self.messages.append(user_message)
             
-            # Build prompt based on type
-            if prompt_type == "rag" and context:
-                prompt = PromptTemplate.rag_question(question, context)
-            elif prompt_type == "document" and context:
-                prompt = PromptTemplate.document_analysis(question, context)
-            elif prompt_type == "code" and context:
-                prompt = PromptTemplate.code_analysis(question, context)
-            else:
-                prompt = PromptTemplate.general_chat(question)
+            # Create unified prompt
+            prompt = UnifiedPromptTemplate.create_prompt(question, context)
             
             # Generate response
-            logger.info(f"Generating response for prompt type: {prompt_type}")
+            logger.info("Generating response,,,")
             response_text = self.llm_client.generate_response(prompt, context=context)
             
             # Format response
-            formatted_response = self._format_response(response_text, prompt_type)
+            formatted_response = self._format_response(response_text)
             
             # Add assistant message to history
-            assistant_message = ChatMessage("assistant", formatted_response, metadata={"prompt_type": prompt_type})
+            assistant_message = ChatMessage("assistant", formatted_response)
             self.messages.append(assistant_message)
             
             # Trim history if needed
@@ -170,13 +175,12 @@ class ChatSession:
             
             return error_response
     
-    def _format_response(self, response: str, prompt_type: str) -> str:
+    def _format_response(self, response: str) -> str:
         """
-        Format the response based on prompt type.
+        Format the response.
         
         Args:
             response: Raw response from LLM
-            prompt_type: Type of prompt used
         
         Returns:
             Formatted response
@@ -189,12 +193,6 @@ class ChatSession:
         for prefix in prefixes_to_remove:
             if response.startswith(prefix):
                 response = response[len(prefix):].strip()
-        
-        # Add formatting based on prompt type
-        if prompt_type == "rag":
-            # Add source attribution for RAG responses
-            if not response.startswith("Based on the context"):
-                response = f"Based on the provided context: {response}"
         
         return response
     
@@ -263,7 +261,7 @@ class ChatSession:
             try:
                 # Switch to model
                 if self.switch_model(model_name):
-                    response = self.ask(question, context, prompt_type="rag" if context else "general")
+                    response = self.ask(question, context=context)
                     results[model_name] = response
                 else:
                     results[model_name] = f"Error: Could not switch to model {model_name}"
@@ -280,7 +278,7 @@ class ChatSession:
 if __name__ == "__main__":
     # Test the chat session
     try:
-        chat = ChatSession()
+        chat = ChatSession(model_name="mistral:7b-instruct")
         
         # Test general chat
         print("🤖 Testing general chat...")
@@ -289,14 +287,32 @@ if __name__ == "__main__":
         
         # Test RAG-style question
         print("\n📚 Testing RAG-style question...")
-        context = "Machine learning is a subset of artificial intelligence that enables computers to learn and make decisions without being explicitly programmed."
-        response = chat.ask("What is machine learning?", context=context, prompt_type="rag")
+        context = """Document: 'Introduction to Machine Learning' by John Smith, Page 5. Machine learning is a subset of artificial intelligence that enables computers to learn and make decisions without being explicitly programmed. The field has seen significant growth in recent years.
+
+Document: 'Introduction to Machine Learning' by John Smith, Page 12. Deep learning is a specialized subset of machine learning that uses neural networks with multiple layers to model complex patterns in data.
+
+Document: 'Introduction to Machine Learning' by John Smith, Page 18. Supervised learning involves training a model on labeled data, where the correct answers are provided during training."""
+        response = chat.ask("What is supervised learning?", context=context)
         print(f"Response: {response}")
         
         # Test document analysis
         print("\n📄 Testing document analysis...")
-        doc_context = "This research paper discusses the application of deep learning in computer vision tasks."
-        response = chat.ask("What is the main topic of this document?", context=doc_context, prompt_type="document")
+        doc_context = """Document: 'Deep Learning in Computer Vision' by Sarah Johnson, Page 1. This research paper discusses the application of deep learning in computer vision tasks. The paper begins with an introduction to computer vision challenges.
+
+Document: 'Deep Learning in Computer Vision' by Sarah Johnson, Page 3. The methodology section describes the use of convolutional neural networks for image classification tasks.
+
+Document: 'Deep Learning in Computer Vision' by Sarah Johnson, Page 7. The results section shows that the proposed model achieved 95% accuracy on the test dataset."""
+        response = chat.ask("What is the main topic of this document?", context=doc_context)
+        print(f"Response: {response}")
+        
+        # Test code analysis
+        print("\n💻 Testing code analysis...")
+        code_context = """Document: 'Python Programming Guide' by Mike Chen, Page 15. Code example: def calculate_fibonacci(n): return n if n <= 1 else calculate_fibonacci(n-1) + calculate_fibonacci(n-2)
+
+Document: 'Python Programming Guide' by Mike Chen, Page 22. Code example: def bubble_sort(arr): for i in range(len(arr)): for j in range(0, len(arr)-i-1): if arr[j] > arr[j+1]: arr[j], arr[j+1] = arr[j+1], arr[j]
+
+Document: 'Python Programming Guide' by Mike Chen, Page 28. Code example: def binary_search(arr, target): left, right = 0, len(arr)-1; while left <= right: mid = (left + right) // 2; if arr[mid] == target: return mid; elif arr[mid] < target: left = mid + 1; else: right = mid - 1; return -1"""
+        response = chat.ask("What does bubble_sort function do?", context=code_context)
         print(f"Response: {response}")
         
         # Show session info
@@ -304,4 +320,4 @@ if __name__ == "__main__":
         
     except Exception as e:
         print(f"❌ Error: {e}")
-        print("This is expected if Ollama is not running.") 
+        print("This is expected if Ollama is not running or the model is not available.") 
